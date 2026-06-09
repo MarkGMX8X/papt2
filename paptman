@@ -16,7 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Papt — обёртка над pacman и yay с синтаксисом, похожим на apt.
+Paptman — обёртка над pacman и yay с синтаксисом, похожим на apt.
 update -Sys  -> полное обновление системы (pacman -Syu)
 update       -> только обновление баз (pacman -Sy)
 """
@@ -94,7 +94,7 @@ def parse_args(command, args):
 # ---------- ОСНОВНАЯ ЛОГИКА ----------
 def main():
     if len(sys.argv) < 2:
-        print("Использование: papt {install|remove|update|search} [флаги] [пакеты]")
+        print("Использование: paptman {install|remove|update|search} [флаги] [пакеты]")
         print("Флаги выбора источника:")
         print("  -aur, -yay   -> установка из AUR (через yay)")
         print("  -pcm, -p, -r -> установка из официальных репозиториев (через pacman)")
@@ -102,10 +102,10 @@ def main():
         print("  -Sys, -Syu   -> полное обновление системы (обновить базы + пакеты)")
         print("  без флагов    -> только обновление баз")
         print("Примеры:")
-        print("  papt install firefox")
-        print("  papt install -aur google-chrome")
-        print("  papt update              # только обновление баз")
-        print("  papt update -Sys         # полное обновление системы")
+        print("  paptman install firefox")
+        print("  paptman install -aur google-chrome")
+        print("  paptman update              # только обновление баз")
+        print("  paptman update -Sys         # полное обновление системы")
         sys.exit(1)
 
     command = sys.argv[1]
