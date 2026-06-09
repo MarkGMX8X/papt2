@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Copyright (C) 2026 INSPACE95
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+"""
+Papt — обёртка над pacman и yay с синтаксисом, похожим на apt.
+update -Sys  -> полное обновление системы (pacman -Syu)
+update       -> только обновление баз (pacman -Sy)
+"""
+
+import sys
+import subprocess
+import shutil
+import os
+
+# ---------- НАСТРОЙКИ ----------
+REAL_PACMAN = "/usr/bin/pacman"
+YAY_CMD = "yay"
+
+COMMAND_MAP = {
+    "install": "-S",
+    "remove": "-Rns",
+    "update": "-Sy",      # по умолчанию только обновление баз
+    "search": "-Ss",
+}
+
+AUR_FLAGS = {"-aur", "-yay"}
+REPO_FLAGS = {"-pcm", "-p", "-r"}
+
+# ---------- ФУНКЦИИ ----------
+def is_yay_installed():
+    return shutil.which(YAY_CMD) is not None
+
+def install_yay():
+    print("\n[!] yay не найден, но он необходим для установки пакетов из AUR.")
+    answer = input("Установить yay из AUR? (y/N): ").strip().lower()
+    if answer not in ("y", "yes"):
+        print("[!] Установка отменена. Работа с AUR будет недоступна.")
+        return False
+
+    print("[*] Установка yay...")
+    try:
+        subprocess.run(["sudo", "pacman", "-S", "--needed", "git", "base-devel"], check=True)
+        subprocess.run(["git", "clone", "https://aur.archlinux.org/yay.git"], check=True)
+        os.chdir("yay")
+        subprocess.run(["makepkg", "-si", "--noconfirm"], check=True)
+        os.chdir("..")
+        subprocess.run(["rm", "-rf", "yay"], check=True)
+        print("[OK] yay успешно установлен!")
+        return True
+    except Exception as e:
+        print(f"[ERROR] Ошибка установки yay: {e}")
+        return False
+
+def ensure_yay():
+    if not is_yay_installed():
+        if not install_yay():
+            print("[ERROR] Невозможно продолжить работу с AUR. Завершение.")
+            sys.exit(1)
+
+def run_cmd(cmd, use_sudo=False):
+    if use_sudo and cmd[0] != "sudo":
+        cmd = ["sudo"] + cmd
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        sys.exit(e.returncode)
+
+def parse_args(command, args):
+    source = "repo"
+    filtered_args = []
+    for arg in args:
+        if arg in AUR_FLAGS:
+            source = "aur"
+        elif arg in REPO_FLAGS:
+            source = "repo"
+        else:
+            filtered_args.append(arg)
+    return source, filtered_args
+
+# ---------- ОСНОВНАЯ ЛОГИКА ----------
+def main():
+    if len(sys.argv) < 2:
+        print("Использование: papt {install|remove|update|search} [флаги] [пакеты]")
+        print("Флаги выбора источника:")
+        print("  -aur, -yay   -> установка из AUR (через yay)")
+        print("  -pcm, -p, -r -> установка из официальных репозиториев (через pacman)")
+        print("Для update:")
+        print("  -Sys, -Syu   -> полное обновление системы (обновить базы + пакеты)")
+        print("  без флагов    -> только обновление баз")
+        print("Примеры:")
+        print("  papt install firefox")
+        print("  papt install -aur google-chrome")
+        print("  papt update              # только обновление баз")
+        print("  papt update -Sys         # полное обновление системы")
+        sys.exit(1)
+
+    command = sys.argv[1]
+
+    # Прямой вызов pacman, если команда не наша
+    if command not in COMMAND_MAP:
+        run_cmd([REAL_PACMAN] + sys.argv[1:], use_sudo=True)
+        return
+
+    args = sys.argv[2:]
+    source, pkg_args = parse_args(command, args)
+
+    # ---- UPDATE (с поддержкой -Sys или -Syu для полного обновления) ----
+    if command == "update":
+        # Проверяем, есть ли флаг полного обновления
+        is_full_upgrade = "-Sys" in pkg_args or "-Syu" in pkg_args
+        
+        # Убираем эти флаги из списка аргументов, чтобы не передавать их pacman дважды
+        clean_args = [a for a in pkg_args if a not in ("-Sys", "-Syu")]
+        
+        if is_full_upgrade:
+            flag = "-Syu"
+            action = "полное обновление системы"
+        else:
+            flag = "-Sy"
+            action = "обновление баз репозиториев"
+        
+        print(f"[*] {action}...")
+        
+        # Для полного обновления нужен yay (чтобы обновить и AUR)
+        if is_full_upgrade and not is_yay_installed():
+            print("[!] Для полного обновления (включая AUR) нужен yay.")
+            answer = input("Установить yay? (y/N): ").strip().lower()
+            if answer in ("y", "yes"):
+                if not install_yay():
+                    print("[!] Продолжаем обновление только официальных репозиториев.")
+                    run_cmd([REAL_PACMAN, flag] + clean_args, use_sudo=True)
+                    return
+            else:
+                print("[!] Обновляем только официальные репозитории.")
+                run_cmd([REAL_PACMAN, flag] + clean_args, use_sudo=True)
+                return
+        
+        # Если полное обновление и yay есть — используем yay
+        if is_full_upgrade and is_yay_installed():
+            run_cmd([YAY_CMD, flag] + clean_args, use_sudo=False)
+        else:
+            # Только обновление баз — используем pacman
+            run_cmd([REAL_PACMAN, flag] + clean_args, use_sudo=True)
+        return
+
+    # ---- install из AUR ----
+    if command == "install" and source == "aur":
+        ensure_yay()
+        run_cmd([YAY_CMD, "-S"] + pkg_args, use_sudo=False)
+        return
+
+    # ---- search по AUR ----
+    if command == "search" and source == "aur":
+        ensure_yay()
+        run_cmd([YAY_CMD, "-Ss"] + pkg_args, use_sudo=False)
+        return
+
+    # ---- search по repo ----
+    if command == "search" and source == "repo":
+        run_cmd([REAL_PACMAN, "-Ss"] + pkg_args, use_sudo=True)
+        return
+
+    # ---- search везде ----
+    if command == "search":
+        print("--- Официальные репозитории ---")
+        run_cmd([REAL_PACMAN, "-Ss"] + pkg_args, use_sudo=True)
+        print("\n--- Arch User Repository (AUR) ---")
+        if is_yay_installed():
+            run_cmd([YAY_CMD, "-Ss"] + pkg_args, use_sudo=False)
+        else:
+            print("[!] yay не установлен, поиск по AUR невозможен.")
+        return
+
+    # ---- install из repo (по умолчанию) ----
+    if command == "install":
+        run_cmd([REAL_PACMAN, "-S"] + pkg_args, use_sudo=True)
+        return
+
+    # ---- remove ----
+    if command == "remove":
+        run_cmd([REAL_PACMAN, "-Rns"] + pkg_args, use_sudo=True)
+        return
+
+    # ---- fallback ----
+    run_cmd([REAL_PACMAN, COMMAND_MAP.get(command, "")] + pkg_args, use_sudo=True)
+
+if __name__ == "__main__":
+    main()
